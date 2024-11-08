@@ -89,52 +89,52 @@ class Redis:
         if len(args) < 2:
             return "ERROR wrong number of arguments"
 
-        insert = True
+        insert = True       # flags if value should be inserted or if there is an error
         key, value, *opts = args
 
         result = 'OK'
-        current_lifetime = self.lifetimes.pop(key, 0.)
+        current_lifetime = self.lifetimes.pop(key, 0.)  # store lifetime for if lifetime should be kept
         while len(opts) > 0:
             match opts.pop(0).upper():
                 case 'NX':
-                    if key in self.data: insert = False
+                    if key in self.data: insert = False # only insert if not present
                 case 'XX':
-                    if insert == False: return "ERROR syntax error"
-                    if key not in self.data: insert = False
+                    if insert == False: return "ERROR syntax error"     # user input NX and XX, which is not alowed
+                    if key not in self.data: insert = False     # only insert if not present
                 case 'GET':
                     result = self.redis_get([key])
-                case 'EX':
+                case 'EX':  # set number of seconds to persist
                     if opts[0].isdigit():
                         expire = time.time() + float(opts.pop(0))
                         self.lifetimes[key] = expire
                     else:
                         insert = False
-                case 'PX':
+                case 'PX':  # set number of milliseconds to persist
                     if opts[0].isdigit():
                         expire = time.time() + float(opts.pop(0))/1000
                         self.lifetimes[key] = expire
                     else:
                         insert = False
-                case 'EXAT':
+                case 'EXAT':    # set time in seconds to expire
                     if opts[0].isdigit():
                         expire = float(opts.pop(0))
                         self.lifetimes[key] = expire
                     else:
                         insert = False
-                case 'PXAT':
+                case 'PXAT':    # set time in milliseconds to expire
                     if opts[0].isdigit():
                         expire = float(opts.pop(0))/1000
                         self.lifetimes[key] = expire
                     else:
                         insert = False
-                case 'KEEPTTL':
+                case 'KEEPTTL': # reassign expiration time
                     self.lifetimes[key] = current_lifetime
                 case _:
                     return "ERROR unknown option"
 
         if insert:
             self.data[key] = value
-            return result
+            return result   # either OK or value from GET
         else:
             return ''
 
@@ -197,10 +197,10 @@ class Redis:
         Integer reply: the length of the list after the push operation.
         """
         name, *elements = args
-        value = self.data.get(name, [])
+        value: list = self.data.get(name, [])
         if isinstance(value, list):
-            elements.reverse()
-            self.data[name] = [*elements, *value]
+            elements.reverse()  # an alternative to left pushing repeatedly with a loop
+            self.data[name] = [*elements, *value]   # packs into a single array
             return 'integer ' + str(len(self.data[name]))
         else:
             return "ERROR not a list"
@@ -230,11 +230,18 @@ class Redis:
         value_list = self.data.get(name, None)
 
         if isinstance(value_list, list):
+            # removes multiple at once rather then
             removed, remainder = self.data[name][:count], self.data[name][count:]
             self.data[name] = remainder
-            return 'integer ' + str(len(removed))
+
+            result = []
+            for i in range(len(removed)):
+                k = len(removed) - i - 1
+                result.append("%-5d" % (i + 1) + f'{removed[k]}')
+            return '\n'.join(result).strip()
         else:
             return "ERROR: not a list"
+
 
     def redis_range(self, args: list[str]):
         """
@@ -345,7 +352,7 @@ class Redis:
         """
         Terminates the Quiq Redis CLI
         """
-        self.flag = False
+        self.active = False
         return 'THE END'
 
 

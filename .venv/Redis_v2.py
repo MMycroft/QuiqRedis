@@ -77,7 +77,7 @@ class Redis:
                 raise NameError(f"unknown command '{com}'")
             result.append(com.upper() + command.__doc__)
 
-        return '\n'.join(result)
+        return '\n'.join(result) + '\n'
 
     def redis_set(self, args: list[str]):
         """

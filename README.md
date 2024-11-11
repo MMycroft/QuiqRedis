@@ -18,7 +18,7 @@ Ensure that you have Python installed on your system. Open a terminal and naviga
 and run
 >python Redis.py
 
-Read the menu options carefully. The program is not case sensitive, so commands may be entered in any format the user 
+Read the menu options carefully. The program is not case-sensitive, so commands may be entered in any format the user 
 prefers. Enter
 >HELP
 
@@ -26,7 +26,7 @@ to learn about the available commands. Enter
 >HELP \<command name\>
 
 to learn about a specific command. Enter
->END
+>QUIT
 
 to terminate the program.
 

@@ -7,20 +7,20 @@ class Redis:
     def __init__(self):
         """ Redis Class Constructor"""
         self.active: bool = True        # active indicates the program should continue
-        self.data: dict[str,str] = {}            # stores Redis key values
+        self.data: dict[str,any] = {}            # stores Redis key values
         self.lifetimes: dict[str,float] = {}     # stores Redis key lifetimes
         self.commands: dict[str,callable] = {    # maps command string to command function
-                'HELP': self.redis_help,
-                'SET': self.redis_set,
-                'GET': self.redis_get,
-                'MGET': self.redis_mget,
-                'DEL': self.redis_delete,
-                'LPUSH': self.redis_left_push,
-                'LPOP': self.redis_left_pop,
+                'HELP':   self.redis_help,
+                'SET':    self.redis_set,
+                'GET':    self.redis_get,
+                'MGET':   self.redis_mget,
+                'DEL':    self.redis_delete,
+                'LPUSH':  self.redis_left_push,
+                'LPOP':   self.redis_left_pop,
                 'LRANGE': self.redis_range,
-                'HSET': self.redis_hash_set,
-                'HGET': self.redis_hash_get,
-                'END': self.redis_end
+                'HSET':   self.redis_hash_set,
+                'HGET':   self.redis_hash_get,
+                'QUIT':    self.redis_quit
         }
 
     def clean(self):
@@ -30,18 +30,35 @@ class Redis:
         keys: list[str] = list(self.lifetimes.keys())       # list of keys with active lifetimes (may be empty)
         for key in keys:
             if time.time() > self.lifetimes.get(key, 0.):   # check if time has expired
-                self.data.pop(key, '')                      # remove from data FIRST
-                self.lifetimes.pop(key, '')                 # remove from lifetimes set LAST
+                self.data.pop(key, '')                      # remove from data set
+                self.lifetimes.pop(key, '')                 # remove from lifetimes set
 
-    def execute_command(self, com: str, args: list):
+    def execute_command(self, com: str, args: list[str]):
         """
         param com: Redis command string
         param args: Arguments for command function
 
         Executes appropriate command function with args list
         """
-        command: callable = self.commands.get(com.upper(), self.redis_default)    # get command function
-        print(command(args))
+        try:
+            command: callable = self.commands.get(com.upper())    # get command function
+            if command is None:
+                arg_string = "'" + "' '".join(args) + "'" if len(args) > 0 else ''
+                raise NameError(f"unknown command '{com}' with args beginning with: {arg_string}")
+            print(command(args), end='')
+
+        except NameError as e:
+            print(f"(error) ERR {e}")
+        except SyntaxError:
+            print(f"(error) ERR syntax error")
+        except TypeError:
+            print(f"(error) WRONGTYPE Operation against a key holding the wrong kind of value")
+        except ValueError as e:
+            print(f"(error) ERR wrong number of arguments for '{com}' command")
+        except IndexError:
+            print("(error) ERR value is out of range, must be positive")
+        except Exception as e:
+            print(f"(error) ERR {e}")
 
     def redis_help(self, args: list[str]):
         """
@@ -55,10 +72,10 @@ class Redis:
         # list of command strings concatenated to their doc strings
         result: list[str] = []
         for com in command_strings:
-            com_string: str = com.upper()
-            command: callable = self.commands.get(com_string, self.redis_default)
-            doc_string = command.__doc__
-            result.append(com_string + doc_string)
+            command: callable = self.commands.get(com.upper())
+            if command is None:
+                raise NameError(f"unknown command '{com}'")
+            result.append(com.upper() + command.__doc__)
 
         return '\n'.join(result)
 
@@ -86,58 +103,62 @@ class Redis:
         Bulk string reply: GET given: The previous value of the key.
 
         """
-        if len(args) < 2:
-            return "ERROR wrong number of arguments"
 
-        insert = True       # flags if value should be inserted or if there is an error
+        if len(args) < 2:
+            raise ValueError
+
         key, value, *opts = args
 
-        result = 'OK'
-        current_lifetime = self.lifetimes.pop(key, 0.)  # store lifetime for if lifetime should be kept
-        while len(opts) > 0:
-            match opts.pop(0).upper():
-                case 'NX':
-                    if key in self.data: insert = False # only insert if not present
-                case 'XX':
-                    if insert == False: return "ERROR syntax error"     # user input NX and XX, which is not alowed
-                    if key not in self.data: insert = False     # only insert if not present
-                case 'GET':
-                    result = self.redis_get([key])
-                case 'EX':  # set number of seconds to persist
-                    if opts[0].isdigit():
-                        expire = time.time() + float(opts.pop(0))
-                        self.lifetimes[key] = expire
-                    else:
-                        insert = False
-                case 'PX':  # set number of milliseconds to persist
-                    if opts[0].isdigit():
-                        expire = time.time() + float(opts.pop(0))/1000
-                        self.lifetimes[key] = expire
-                    else:
-                        insert = False
-                case 'EXAT':    # set time in seconds to expire
-                    if opts[0].isdigit():
-                        expire = float(opts.pop(0))
-                        self.lifetimes[key] = expire
-                    else:
-                        insert = False
-                case 'PXAT':    # set time in milliseconds to expire
-                    if opts[0].isdigit():
-                        expire = float(opts.pop(0))/1000
-                        self.lifetimes[key] = expire
-                    else:
-                        insert = False
-                case 'KEEPTTL': # reassign expiration time
-                    self.lifetimes[key] = current_lifetime
-                case _:
-                    return "ERROR unknown option"
+        settable: bool = True
+        result: str = 'OK'
 
-        if insert:
-            self.data[key] = value
-            return result   # either OK or value from GET
-        else:
-            return ''
+        if len(opts) > 0:
+            time_to_live: float = None
+            options: set = {opt.upper() for opt in opts}
 
+            if len({'NX', 'XX'} & options) > 1: # choose one
+                raise SyntaxError
+            if len({'EX', 'PX', 'EXAT', 'PXAT', 'KEEPTTL'} & options) > 1:  # choose one
+                raise SyntaxError
+
+            # [NX|XX]
+            if 'NX' in options:
+                options.remove('NX')
+                settable = key not in self.data
+            elif 'XX' in options:
+                options.remove('XX')
+                settable = key in self.data
+            if not settable: return '(nil)\n'
+            # [GET]
+            if 'GET' in options:
+                options.remove('GET')
+                result: str = self.redis_get([key]).strip()
+            # [EX|PX|EXAT|PXAT|KEEPTTL]
+            if len(options) == 2:
+                if 'EX' in options:
+                    options.remove('EX')
+                    seconds = float(options.pop())
+                    time_to_live = time.time() + seconds
+                elif 'PX' in options:
+                    options.remove('PX')
+                    milliseconds = float(options.pop() / 1000)
+                    time_to_live = time.time() + milliseconds
+                elif 'EXAT' in options:
+                    options.remove('EXAT')
+                    time_to_live = float(options.pop())
+                elif 'PXAT' in options:
+                    options.remove('PXAT')
+                    time_to_live = float(options.pop() / 1000)
+            elif 'KEEPTTL' in options:
+                options.remove('KEEPTTL')
+                time_to_live = self.lifetimes.pop(key) if key in self.lifetimes else None
+
+            if len(options) > 0: raise SyntaxError
+
+            if time_to_live is not None: self.lifetimes[key] = time_to_live
+
+        self.data[key] = value
+        return result + '\n'   # either OK or value from GET
 
     def redis_get(self, args: list[str]):
         """
@@ -150,10 +171,15 @@ class Redis:
         Bulk string reply: the value of the key.
         Nil reply: if the key does not exist.
         """
-        if len(args) > 0:
-            key = args[0]
-            value = self.data.get(key, 'nil')
-            return (f'{value}' if isinstance(value, str) else "ERROR not a string").strip()
+        if len(args) != 1:
+            raise ValueError
+        key = args[0]
+        value = self.data.get(key)
+        if value is None:
+            return "(nil)\n"
+        if not isinstance(value, str):
+            raise TypeError
+        return f'"{value}"\n'
 
     def redis_mget(self, args: list[str]):
         """
@@ -166,9 +192,10 @@ class Redis:
         """
         result = []
         for i, key in enumerate(args):
-            value = self.data.get(key, 'nil')
-            result.append("%-5d" % (i + 1) + f'{value}')
-        return '\n'.join(result).strip()
+            value = self.data.get(key)
+            value = '(nil)' if not isinstance(value, str) else f'"{value}"'
+            result.append(f"{i + 1}) {value}")
+        return '\n'.join(result) + '\n'
 
     def redis_delete(self, args: list[str]):
         """
@@ -179,8 +206,9 @@ class Redis:
         Integer reply: the number of keys that were removed.
         """
         count=0
-        for arg in args: count += 1 if self.data.pop(arg, None) is not None else 0
-        return f'integer {count}'
+        for arg in args:
+            count += 1 if self.data.pop(arg, None) is not None else 0
+        return f'(integer) {count}\n'
 
     def redis_left_push(self, args: list[str]):
         """
@@ -197,13 +225,17 @@ class Redis:
         Integer reply: the length of the list after the push operation.
         """
         name, *elements = args
+
+        if len(elements) == 0:
+            raise ValueError
+
         value: list = self.data.get(name, [])
         if isinstance(value, list):
             elements.reverse()  # an alternative to left pushing repeatedly with a loop
             self.data[name] = [*elements, *value]   # packs into a single array
-            return 'integer ' + str(len(self.data[name]))
+            return f'(integer) {len(self.data[name])}\n'
         else:
-            return "ERROR not a list"
+            raise TypeError
 
     def redis_left_pop(self, args: list[str]):
         """
@@ -220,27 +252,35 @@ class Redis:
         param args: [key, count]
         """
 
-        match len(args):
-            case 0:
-                return "ERROR not enough arguments"
-            case 1: name, count = args[0], '1'
-            case _: name, count = args[0], args[1]
+        if len(args) < 1 or len(args) > 2:
+            raise ValueError
 
-        count = int(count) if count.isdigit() else 0
-        value_list = self.data.get(name, None)
+        name, *count = args
+
+        count = '1' if len(count) == 0 else count[0]
+
+        if count.isdigit():
+            count = int(count)
+        else:
+            raise IndexError
+
+        value_list = self.data.get(name)
 
         if isinstance(value_list, list):
             # removes multiple at once rather then
-            removed, remainder = self.data[name][:count], self.data[name][count:]
+            removed = self.data[name][:count]
+            remainder = self.data[name][count:]
+
             self.data[name] = remainder
 
-            result = []
-            for i in range(len(removed)):
-                k = len(removed) - i - 1
-                result.append("%-5d" % (i + 1) + f'{removed[k]}')
-            return '\n'.join(result).strip()
+            if count == 1:
+                result = f'"{removed[0]}"'
+            else:
+                result = '\n'.join([f'{i + 1}) "{removed[len(removed)-i-1]}"' for i in range(len(removed))])
+
+            return result + '\n'
         else:
-            return "ERROR: not a list"
+            raise TypeError
 
 
     def redis_range(self, args: list[str]):
@@ -254,8 +294,8 @@ class Redis:
 
         param args: ['key', 'start', 'stop']
         """
-        if len(args) < 3:
-            return "ERROR not enough arguments"
+        if len(args) != 3:
+            raise ValueError
 
         def get_num(number: str):
             if number[0] == '-':
@@ -270,20 +310,27 @@ class Redis:
         start = get_num(args[1])
         end = get_num(args[2])
 
-        if start is None or end is None: return "ERROR not an integer"
+        if start is None or end is None:
+            raise Exception('value is not an integer or out of range')
 
-        value: list = self.data.get(name, [])
+        value: list = self.data.get(name)
+
+        if value is None: return '(empty array)\n'
 
         if isinstance(value, list):
-            result = []
-            if end < 0:
-                end += len(value)
+            if start >= len(value): return '(empty array)\n'
+            if start < -len(value): start = 0
+            elif start < 0: start %= len(value)
+
+            if end < -len(value): end = 0
+            if end < 0: end %= len(value)
             if end >= len(value): end = len(value) - 1
-            for i in range(start, end + 1):
-                result.append("%-5d" % (i + 1) + f'{value[i]}')
-            return '\n'.join(result).strip()
+
+            result = '\n'.join([f'{i + 1}) "{value[i]}"' for i in range(start, end + 1)])
+
+            return result + '\n'
         else:
-            return "ERROR not a list"
+            raise TypeError
 
     def redis_hash_set(self, args: list[str]):
         """
@@ -298,9 +345,8 @@ class Redis:
 
         Integer reply: the number of fields that were added.
         """
-        if len(args) < 3:
-            return "ERROR: not enough arguments"
-
+        if len(args) < 3 or len(args) % 2 == 0:
+            raise ValueError
 
         key, *elements = args
 
@@ -312,50 +358,40 @@ class Redis:
 
             for i in range(0, len(elements), 2):
                 self.data[key][elements[i]] = elements[i + 1]
-            return "integer " + str((i + 2) // 2)
-
+            return f'(integer) {(i + 2) // 2}\n'
         else:
-            return "ERROR: not a hash set"
+            raise TypeError
 
     def redis_hash_get(self, args: list[str]):
         """
-        Returns the value associated with field in the hash stored at key.
+        Returns the value associated with field in the h_set stored at key.
         Does not support multiple field values. Ignores trailing arguments.
 
         param args: ['key', 'field']
 
         Bulk string reply: The value associated with the field.
-        Nil reply: If the field is not present in the hash or key does not exist.
+        Nil reply: If the field is not present in the h_set or key does not exist.
         """
-        if len(args) < 2:
-            return "ERROR not enough arguments"
+        if len(args) != 2:
+            raise ValueError
 
-        name, key = args[0], args[1]
-        hash = self.data.get(name, 'nil')
-        if isinstance(hash, dict):
-            value = hash.get(key, 'nil')
-            return f'{value}'
-        elif hash == 'nil':
-            return 'nil'
+        name, key = args
+        h_set = self.data.get(name)
+        if isinstance(h_set, dict):
+            value = h_set.get(key)
+            value = '(nil)' if value is None else f'"{value}"'
+            return f'{value}\n'
+        elif h_set is None:
+            return '(nil)\n'
         else:
-            return "ERROR not a hash set"
+            raise TypeError
 
-
-
-    def redis_default(self, *_):
-        """
-        not a command
-        """
-        return "ERROR not a command"
-
-    def redis_end(self, *_):
+    def redis_quit(self, *_):
         """
         Terminates the Quiq Redis CLI
         """
         self.active = False
-        return 'THE END'
-
-
+        return ''
 
 def main():
     redis = Redis()
@@ -365,12 +401,13 @@ def main():
     print("------------------------------------------------------")
     print("Enter HELP to see all commands with descriptions")
     print("Enter HELP <command> to see a description of a command")
-    print("Enter END to terminate the program")
+    print("Enter QUIT to terminate the program")
     print("------------------------------------------------------")
 
     while redis.active:
         print("command> ", end='')
         in_str: str = input()
+        if len(in_str) == 0: continue
         com, *args = in_str.split(' ')
         redis.clean()
         redis.execute_command(com, args)

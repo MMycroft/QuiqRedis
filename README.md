@@ -13,15 +13,22 @@ system, a data structure like a tree would be much better suited, since the sear
 
 ## Versions
 
-The project contains two versions of the program. Version one of the program,
+The project contains three versions of the program. Version one of the program,
 > Redis_v1.py
 
 functions similar to the Redis CLI, but uses print statements for errors, and is not formatted exactly the same as Redis CLI.
+
 Version two of the program,
 >Redis_v2.py
 
 improves on version one with error handling. The format of the printed statements is the same as the Redis CLI. Additionally,
 version 2 fixes some logical errors in the options of the SET command of version one.
+
+Version Interview of the program,
+>Redis_Interview.py
+
+is identical to version 2, but with some added comments/commentary. This version should be used for
+for discussion and modification of the program during the interview.
 
 ## Implementation & Design
 The program uses a simple map (dictionary) to map command strings to functions. This allows more general code for command execution,

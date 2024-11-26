@@ -124,6 +124,7 @@ class Redis:
     """
     Improves: 
         change setting of lifetimes to use an ordered linked list or a heap
+        find an effective way to map options to functions to gain docstring benefits
     """
     def redis_set(self, args: list[str]):
         """
